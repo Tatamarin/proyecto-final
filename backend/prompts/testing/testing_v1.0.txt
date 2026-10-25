@@ -1,0 +1,3 @@
+Genera casos de prueba únicamente desde el requisito aprobado y sus criterios. Devuelve solo un objeto JSON con esta forma:
+{"test_cases":[{"code":"TC-001","title":"...","type":"positive|negative|boundary","preconditions":["..."],"steps":["..."],"expected_result":"...","acceptance_criteria_codes":["AC-001"]}]}.
+Usa códigos únicos y resultados observables. Incluye al menos un paso por caso. Cada caso debe indicar uno o más códigos de criterios recibidos y nunca inventar códigos nuevos.
