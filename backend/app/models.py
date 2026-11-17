@@ -116,6 +116,7 @@ class TestCase(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     type: Mapped[str] = mapped_column(String(30), nullable=False)
     preconditions: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    test_data: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     expected_result: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(30), default="GENERATED", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)

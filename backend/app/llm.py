@@ -5,12 +5,13 @@ from pathlib import Path
 import httpx
 
 from .config import settings
+from .demo import demo_requirements, demo_tests
 
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
 PROMPTS = {
     "REQUIREMENTS": ("requirements_v1.0", PROMPTS_DIR / "requirements" / "requirements_v1.0.txt"),
-    "TESTING": ("testing_v1.0", PROMPTS_DIR / "testing" / "testing_v1.0.txt"),
+    "TESTING": ("testing_v1.1", PROMPTS_DIR / "testing" / "testing_v1.1.txt"),
 }
 
 
@@ -47,13 +48,11 @@ class LLMService:
         response.raise_for_status()
         data = response.json()
         content = data["choices"][0]["message"]["content"]
-        return json.loads(content), round((time.perf_counter()-started)*1000), settings.ai_model
+        return json.loads(content), round((time.perf_counter() - started) * 1000), data.get("model") or settings.ai_model
 
-    def demo(self, agent, payload):
+    def demo(self, agent: str, payload: dict) -> dict:
         if agent == "REQUIREMENTS":
-            return {"requirements": [{"code":"REQ-001","type":"functional","title":"Implementar la necesidad","description":payload["description"],"priority":"high","acceptance_criteria":[{"code":"AC-001","description":"La funcionalidad cumple la necesidad descrita."},{"code":"AC-002","description":"Se informa claramente cualquier error."}]}],"ambiguities":[],"missing_information":[]}
+            return demo_requirements(payload)
         if agent == "TESTING":
-            r = payload["requirement"]
-            criterion_codes = [item["code"] for item in r["acceptance_criteria"]]
-            return {"test_cases":[{"code":"TC-001","title":f"Flujo válido: {r['title']}","type":"positive","preconditions":["El usuario tiene acceso al sistema"],"steps":["Abrir la funcionalidad","Ingresar datos válidos","Confirmar la operación"],"expected_result":"La operación se completa correctamente.","acceptance_criteria_codes":criterion_codes},{"code":"TC-002","title":f"Validación: {r['title']}","type":"negative","preconditions":[],"steps":["Abrir la funcionalidad","Ingresar datos inválidos"],"expected_result":"El sistema muestra un mensaje de validación.","acceptance_criteria_codes":criterion_codes}]}
+            return demo_tests(payload)
         raise ValueError(f"Agente no soportado: {agent}")
