@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -38,8 +39,10 @@ def project_or_404(db: Session, project_id: int) -> Project:
     return project
 
 
-def requirement_or_404(db: Session, requirement_id: int) -> Requirement:
-    requirement = db.get(Requirement, requirement_id)
+def requirement_or_404(
+    db: Session, requirement_id: int, *, lock: bool = False
+) -> Requirement:
+    requirement = db.get(Requirement, requirement_id, with_for_update=lock, populate_existing=lock)
     if not requirement:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Requisito no encontrado")
     return requirement
@@ -70,6 +73,7 @@ def test_payload(test: TestCase) -> dict:
         "title": test.title,
         "type": test.type,
         "preconditions": test.preconditions,
+        "test_data": test.test_data,
         "steps": [
             {"order": step.step_order, "description": step.description}
             for step in test.steps
@@ -93,8 +97,14 @@ def prompt_version(db: Session, agent: str) -> PromptVersion:
             version=version_name,
             template=template,
         )
-        db.add(version)
-        db.flush()
+        try:
+            with db.begin_nested():
+                db.add(version)
+                db.flush()
+        except IntegrityError:
+            version = db.query(PromptVersion).filter_by(
+                agent_type=agent, version=version_name
+            ).one()
     return version
 
 
@@ -103,6 +113,7 @@ def start_execution(db: Session, agent: str, payload: dict) -> AIExecution:
         prompt_version=prompt_version(db, agent),
         agent_type=agent,
         model=settings.ai_model if settings.ai_api_key else "demo",
+        temperature=0.2 if settings.ai_api_key else None,
         input_json=payload,
         status="RUNNING",
         execution_time_ms=0,
@@ -118,7 +129,10 @@ def mark_execution_failed(db: Session, execution_id: int, exc: Exception) -> Non
     execution = db.get(AIExecution, execution_id)
     if execution:
         execution.status = "FAILURE"
-        execution.error_message = str(exc)[:2000]
+        if isinstance(exc, ValidationError):
+            execution.error_message = str(exc.errors(include_input=False))[:2000]
+        else:
+            execution.error_message = str(exc)[:2000]
         db.commit()
 
 
@@ -187,6 +201,9 @@ def generate_requirements(need_id: int, db: Session = Depends(get_db)):
     try:
         raw_output, elapsed_ms, model = llm.generate("REQUIREMENTS", input_payload)
         output = RequirementsGeneration.model_validate(raw_output)
+        need = db.get(Need, need_id, with_for_update=True, populate_existing=True)
+        if need.requirements:
+            raise HTTPException(409, "La necesidad ya tiene requisitos generados")
         execution.model = model
         execution.output_json = output.model_dump()
         execution.execution_time_ms = elapsed_ms
@@ -209,6 +226,8 @@ def generate_requirements(need_id: int, db: Session = Depends(get_db)):
         db.commit()
     except Exception as exc:
         mark_execution_failed(db, execution.id, exc)
+        if isinstance(exc, HTTPException):
+            raise
         detail = "El agente de requisitos no produjo una respuesta válida"
         if not isinstance(exc, ValidationError):
             detail = "No fue posible ejecutar el agente de requisitos"
@@ -230,7 +249,7 @@ def update_requirement(
     data: RequirementUpdate,
     db: Session = Depends(get_db),
 ):
-    requirement = requirement_or_404(db, requirement_id)
+    requirement = requirement_or_404(db, requirement_id, lock=True)
     if requirement.tests:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -269,7 +288,9 @@ def decide_requirement(
     decision: ReviewDecision | None = None,
     db: Session = Depends(get_db),
 ):
-    requirement = requirement_or_404(db, requirement_id)
+    requirement = requirement_or_404(db, requirement_id, lock=True)
+    if action == "reject" and requirement.tests:
+        raise HTTPException(409, "No se puede rechazar un requisito con casos asociados")
     if action not in {"approve", "reject"}:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Acción no válida")
     decision = decision or ReviewDecision()
@@ -316,7 +337,7 @@ def generate_tests(requirement_id: int, db: Session = Depends(get_db)):
         {"code": item.code, "description": item.description}
         for item in requirement.acceptance_criteria
     ]
-    criteria_by_code = {item.code: item for item in requirement.acceptance_criteria}
+    snapshot = requirement_payload(requirement)
     input_payload = {
         "requirement": {
             "code": requirement.code,
@@ -329,6 +350,12 @@ def generate_tests(requirement_id: int, db: Session = Depends(get_db)):
     try:
         raw_output, elapsed_ms, model = llm.generate("TESTING", input_payload)
         output = TestsGeneration.model_validate(raw_output)
+        requirement = requirement_or_404(db, requirement_id, lock=True)
+        if requirement.status != "APPROVED" or requirement_payload(requirement) != snapshot:
+            raise HTTPException(409, "El requisito cambió durante la generación")
+        if requirement.tests:
+            raise HTTPException(409, "El requisito ya tiene casos de prueba generados")
+        criteria_by_code = {item.code: item for item in requirement.acceptance_criteria}
         execution.model = model
         execution.output_json = output.model_dump()
         execution.execution_time_ms = elapsed_ms
@@ -347,6 +374,7 @@ def generate_tests(requirement_id: int, db: Session = Depends(get_db)):
                 title=row.title,
                 type=row.type,
                 preconditions=row.preconditions,
+                test_data=row.test_data,
                 expected_result=row.expected_result,
             )
             test.steps = [
@@ -360,6 +388,8 @@ def generate_tests(requirement_id: int, db: Session = Depends(get_db)):
         db.commit()
     except Exception as exc:
         mark_execution_failed(db, execution.id, exc)
+        if isinstance(exc, HTTPException):
+            raise
         detail = "El agente de pruebas no produjo una respuesta válida"
         if not isinstance(exc, ValidationError):
             detail = "No fue posible ejecutar el agente de pruebas"
@@ -378,6 +408,33 @@ def list_tests(requirement_id: int, db: Session = Depends(get_db)):
     requirement_or_404(db, requirement_id)
     tests = db.query(TestCase).filter_by(requirement_id=requirement_id).order_by(TestCase.id)
     return [test_payload(test) for test in tests]
+
+
+@router.post("/tests/{test_id}/decision/{action}")
+def decide_test(
+    test_id: int,
+    action: str,
+    decision: ReviewDecision | None = None,
+    db: Session = Depends(get_db),
+):
+    test = db.get(TestCase, test_id, with_for_update=True)
+    if not test:
+        raise HTTPException(404, "Caso de prueba no encontrado")
+    if action not in {"approve", "reject"}:
+        raise HTTPException(404, "Acción no válida")
+    decision = decision or ReviewDecision()
+    original = test_payload(test)
+    test.status = "APPROVED" if action == "approve" else "REJECTED"
+    db.add(HumanReview(
+        test_case=test,
+        reviewer=decision.reviewer,
+        action=test.status,
+        original_value=original,
+        new_value=test_payload(test),
+        reason=decision.reason,
+    ))
+    db.commit()
+    return {"id": test_id, "status": test.status}
 
 
 @router.get("/projects/{project_id}/traceability")
@@ -406,6 +463,7 @@ def traceability(project_id: int, db: Session = Depends(get_db)):
                             "code": test.code,
                             "title": test.title,
                             "type": test.type,
+                            "status": test.status,
                             "acceptance_criteria_codes": [
                                 criterion.code
                                 for criterion in test.acceptance_criteria
@@ -454,6 +512,8 @@ def metrics(project_id: int, db: Session = Depends(get_db)):
     ]
     traced = [item for item in approved if item.tests]
     covered_criteria = [criterion for criterion in criteria if criterion.tests]
+    tests = [test for requirement in requirements for test in requirement.tests]
+    valid_tests = [test for test in tests if test.requirement.status == "APPROVED"]
 
     def percentage(part: int, total: int) -> float:
         return round((part / total) * 100, 2) if total else 0.0
@@ -467,7 +527,7 @@ def metrics(project_id: int, db: Session = Depends(get_db)):
         "needs": len(project.needs),
         "requirements": len(requirements),
         "approved_requirements": len(approved),
-        "test_cases": sum(len(requirement.tests) for requirement in requirements),
+        "test_cases": len(tests),
         "ai_executions": len(execution_ids),
         "quality_indicators": {
             "average_generation_time_ms": average_time,
@@ -475,6 +535,7 @@ def metrics(project_id: int, db: Session = Depends(get_db)):
                 len(complete), len(requirements)
             ),
             "requirement_traceability_pct": percentage(len(traced), len(approved)),
+            "traceability_integrity_pct": percentage(len(valid_tests), len(tests)),
             "acceptance_criteria_coverage_pct": percentage(
                 len(covered_criteria), len(criteria)
             ),
@@ -483,6 +544,7 @@ def metrics(project_id: int, db: Session = Depends(get_db)):
             "time_reduction_pct": 25.0,
             "requirements_completeness_pct": 90.0,
             "requirement_traceability_pct": 95.0,
+            "traceability_integrity_pct": 100.0,
             "acceptance_criteria_coverage_pct": 95.0,
             "time_reduction_requires_manual_baseline": True,
         },

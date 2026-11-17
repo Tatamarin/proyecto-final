@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 
 class ProjectIn(BaseModel):
@@ -9,15 +9,23 @@ class ProjectIn(BaseModel):
 
 
 class NeedIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     description: str = Field(min_length=10, max_length=10_000)
 
 
+NonBlank = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class AcceptanceCriterionIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
     code: str = Field(min_length=1, max_length=30)
     description: str = Field(min_length=5, max_length=2000)
 
 
 class RequirementUpdate(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     type: Literal["functional", "non_functional"]
     title: str = Field(min_length=3, max_length=200)
     description: str = Field(min_length=10, max_length=10_000)
@@ -52,17 +60,8 @@ class NeedOut(NeedIn):
     project_id: int
 
 
-class GeneratedAcceptanceCriterion(AcceptanceCriterionIn):
-    pass
-
-
-class GeneratedRequirement(BaseModel):
+class GeneratedRequirement(RequirementUpdate):
     code: str = Field(min_length=1, max_length=30)
-    type: Literal["functional", "non_functional"]
-    title: str = Field(min_length=3, max_length=200)
-    description: str = Field(min_length=10, max_length=10_000)
-    priority: Literal["low", "medium", "high"] = "medium"
-    acceptance_criteria: list[GeneratedAcceptanceCriterion] = Field(min_length=1)
 
 
 class RequirementsGeneration(BaseModel):
@@ -80,11 +79,14 @@ class RequirementsGeneration(BaseModel):
 
 
 class GeneratedTestCase(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     code: str = Field(min_length=1, max_length=30)
     title: str = Field(min_length=3, max_length=200)
     type: Literal["positive", "negative", "boundary"]
     preconditions: list[str] = Field(default_factory=list)
-    steps: list[str] = Field(min_length=1)
+    test_data: list[NonBlank] = Field(default_factory=list)
+    steps: list[NonBlank] = Field(min_length=1)
     expected_result: str = Field(min_length=5, max_length=5000)
     acceptance_criteria_codes: list[str] = Field(min_length=1)
 

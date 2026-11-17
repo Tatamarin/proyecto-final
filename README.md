@@ -1,5 +1,14 @@
 # SDLC-AI API
 
+
+## Avance hasta la semana 11
+
+La interfaz se abre en [localhost:8000](http://localhost:8000/) después de ejecutar `docker compose up --build`. Con la clave de IA vacía puedes reproducir el caso sintético de recuperación de contraseña, aprobar los requisitos, generar casos y consultar la matriz.
+
+- [Guía de demostración y verificación](docs/ENTREGA_SEMANA_11.md)
+- [Escenario, protocolo e instrumento de línea base](docs/LINEA_BASE_SEMANA_11.md)
+
+
 API REST mínima para transformar una necesidad en requisitos revisables y, después de una aprobación humana, en casos de prueba trazables.
 
 ## Alcance del MVP

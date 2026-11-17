@@ -1,0 +1,147 @@
+{
+  "title": "Recuperación de contraseña por correo",
+  "description": "El portal de clientes debe permitir solicitar un enlace de recuperación por correo. Para una cuenta registrada envía un enlace y muestra la misma confirmación que para una cuenta inexistente, sin enviar correo a esta última. El enlace es de un solo uso y solo es válido antes de que transcurran 30 minutos desde su emisión. Con un enlace válido se puede fijar una nueva contraseña y registrar el resultado sin guardar el enlace ni la contraseña en el registro.",
+  "requirements": [
+    {
+      "code": "REQ-001",
+      "type": "functional",
+      "title": "Solicitar un enlace de recuperación",
+      "description": "El portal recibe un correo y confirma la solicitud sin revelar si la cuenta existe. Envía un enlace únicamente a cuentas registradas.",
+      "priority": "high",
+      "acceptance_criteria": [
+        {
+          "code": "AC-001",
+          "description": "Una solicitud para una cuenta registrada muestra la confirmación y envía un enlace."
+        },
+        {
+          "code": "AC-002",
+          "description": "Una solicitud para una cuenta inexistente muestra la misma confirmación y no envía correo."
+        }
+      ]
+    },
+    {
+      "code": "REQ-002",
+      "type": "functional",
+      "title": "Restablecer la contraseña con un enlace vigente",
+      "description": "El portal permite definir una nueva contraseña con un enlace sin usar cuya antigüedad sea menor a 30 minutos. Registra el resultado sin almacenar el enlace ni la contraseña en el registro.",
+      "priority": "high",
+      "acceptance_criteria": [
+        {
+          "code": "AC-003",
+          "description": "Un enlace sin usar y con antigüedad menor a 30 minutos permite actualizar la contraseña."
+        },
+        {
+          "code": "AC-004",
+          "description": "El portal rechaza el enlace al alcanzar los 30 minutos o si ya se utilizó."
+        },
+        {
+          "code": "AC-005",
+          "description": "El registro conserva el resultado sin incluir el enlace ni la contraseña."
+        }
+      ]
+    }
+  ],
+  "cases": {
+    "AC-001": [
+      {
+        "type": "positive",
+        "title": "Solicitud válida para una cuenta registrada",
+        "preconditions": [
+          "Existe una cuenta de prueba y un buzón simulado."
+        ],
+        "test_data": [
+          "cliente@example.test"
+        ],
+        "steps": [
+          "Solicitar recuperación para la cuenta de prueba.",
+          "Consultar la confirmación y el buzón simulado."
+        ],
+        "expected_result": "El portal muestra la confirmación y el buzón recibe un enlace."
+      }
+    ],
+    "AC-002": [
+      {
+        "type": "negative",
+        "title": "Solicitud para una cuenta inexistente",
+        "preconditions": [
+          "La dirección de prueba no está registrada."
+        ],
+        "test_data": [
+          "ausente@example.test"
+        ],
+        "steps": [
+          "Solicitar recuperación para la dirección inexistente.",
+          "Comparar el mensaje con el de una cuenta registrada y revisar el buzón simulado."
+        ],
+        "expected_result": "El texto de la confirmación coincide y no se envía correo a la dirección inexistente."
+      }
+    ],
+    "AC-003": [
+      {
+        "type": "boundary",
+        "title": "Uso justo antes del vencimiento",
+        "preconditions": [
+          "Se emitió un enlace sin usar y el reloj del portal es simulado."
+        ],
+        "test_data": [
+          "Antigüedad del enlace: 29 min 59 s.",
+          "Contraseña nueva sintética."
+        ],
+        "steps": [
+          "Avanzar el reloj a 29 min 59 s desde la emisión.",
+          "Abrir el enlace e introducir la nueva contraseña."
+        ],
+        "expected_result": "El portal actualiza la contraseña."
+      }
+    ],
+    "AC-004": [
+      {
+        "type": "boundary",
+        "title": "Vencimiento al minuto 30",
+        "preconditions": [
+          "Se emitió un enlace sin usar y el reloj del portal es simulado."
+        ],
+        "test_data": [
+          "Antigüedad del enlace: 30 min 00 s."
+        ],
+        "steps": [
+          "Avanzar el reloj a exactamente 30 minutos desde la emisión.",
+          "Intentar cambiar la contraseña."
+        ],
+        "expected_result": "El portal rechaza el enlace y conserva la contraseña anterior."
+      },
+      {
+        "type": "negative",
+        "title": "Reutilización de un enlace consumido",
+        "preconditions": [
+          "El enlace se utilizó exitosamente y aún no han transcurrido 30 minutos."
+        ],
+        "test_data": [
+          "Enlace de prueba ya consumido."
+        ],
+        "steps": [
+          "Abrir de nuevo el enlace.",
+          "Intentar actualizar la contraseña por segunda vez."
+        ],
+        "expected_result": "El enlace se rechaza y la contraseña no cambia."
+      }
+    ],
+    "AC-005": [
+      {
+        "type": "positive",
+        "title": "Registro del resultado del restablecimiento",
+        "preconditions": [
+          "El portal de prueba tiene habilitado el registro de resultados."
+        ],
+        "test_data": [
+          "Enlace y contraseña sintéticos."
+        ],
+        "steps": [
+          "Ejecutar un restablecimiento válido.",
+          "Consultar el registro del intento con acceso autorizado."
+        ],
+        "expected_result": "El registro indica el resultado y omite el enlace y la contraseña."
+      }
+    ]
+  }
+}
